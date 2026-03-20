@@ -248,8 +248,11 @@ function daysBetween(a,b){ return Math.round((b-a)/86400000); }
 
 function computeEnd(row, effStart) {
   const s = parseDate(effStart != null ? effStart : row.start);
-  if (!s || !row.tage) return '';
-  return fmtDate(addDays(s, +row.tage - 1));
+  if (!s) return '';
+  // For groups, use the span across all children instead of row.tage
+  const tage = row.isGroup ? getGroupTage(row) : (+row.tage || 1);
+  if (!tage) return '';
+  return fmtDate(addDays(s, tage - 1));
 }
 
 function getEffStart(row) {
@@ -263,7 +266,8 @@ function getEffStart(row) {
   if (!row.abh) return row.start;
   const dep = rows.find(r => displayNr(r) === String(row.abh));
   if (!dep) return row.start;
-  const depEnd = parseDate(computeEnd(dep, getEffStart(dep)));
+  const depEffStart = getEffStart(dep);
+  const depEnd = parseDate(computeEnd(dep, depEffStart));
   if (!depEnd) return row.start;
   const verz = parseInt(row.verz) || 0;
   return fmtDate(addDays(depEnd, verz + 1));
