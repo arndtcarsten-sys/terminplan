@@ -135,6 +135,18 @@
   .gantt-resize-handle { position: absolute; right: 0; top: 0; width: 8px; height: 100%; cursor: ew-resize; z-index: 5; display: flex; align-items: center; justify-content: center; }
   .gantt-resize-handle::after { content: ''; display: block; width: 2px; height: 60%; background: rgba(255,255,255,.5); border-radius: 1px; }
   .gantt-bar-wrap:hover .gantt-resize-handle::after { background: rgba(255,255,255,.85); }
+
+  /* Highlight target bar when dragging dependency onto it */
+  .gantt-bar-wrap.dep-target .gantt-bar { outline: 2px solid #2a52be; filter: brightness(1.15); }
+
+  /* Dependency arrows SVG layer */
+  #dep-arrows {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none; z-index: 2; overflow: visible;
+  }
+  .dep-arrow { stroke: rgba(80,80,80,0.45); stroke-width: 1.5; fill: none; marker-end: url(#dep-arrowhead); }
+  
   .gantt-label { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); white-space: nowrap; pointer-events: none; z-index: 3; }
   .gantt-bar-wrap.done .gantt-label { text-decoration: line-through; }
 
@@ -195,6 +207,13 @@
         <div id="gantt-header-bot"></div>
       </div>
       <div id="gantt-body"></div>
+      <svg id="dep-arrows" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="dep-arrowhead" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+            <polygon points="0 0, 7 2.5, 0 5" fill="rgba(80,80,80,0.5)"/>
+          </marker>
+        </defs>
+      </svg>
       <div id="today-line"></div>
     </div>
   </div>
@@ -389,6 +408,7 @@ function renderAll() {
   renderTableRows();
   renderGanttHeader();
   renderGanttRows();
+  renderDepArrows();
   positionTodayLine();
   syncScroll();
   saveState();
@@ -558,6 +578,52 @@ function renderGanttRows(){
       rowDiv.appendChild(wrap);
     }
     body.appendChild(rowDiv);
+  });
+}
+
+function renderDepArrows(){
+  const svg = document.getElementById('dep-arrows');
+  // Remove old arrows (keep defs)
+  svg.querySelectorAll('path').forEach(p => p.remove());
+
+  const rowH   = 36; // --row-h
+  const headerH = 57; // two header rows (2 * 28 + 1px border)
+
+  rows.forEach(row => {
+    if (!row.abh || !isVisible(row)) return;
+    const dep = rows.find(r => displayNr(r) === String(row.abh));
+    if (!dep || !isVisible(dep)) return;
+
+    // Find row indices among visible rows only
+    const visibleRows = rows.filter(r => isVisible(r));
+    const depIdx = visibleRows.indexOf(dep);
+    const rowIdx = visibleRows.indexOf(row);
+    if (depIdx < 0 || rowIdx < 0) return;
+
+    // X: end of dep bar, X: start of target bar
+    const depEffStart  = getEffStart(dep);
+    const depTage      = dep.isGroup ? getGroupTage(dep) : (+dep.tage || 1);
+    const depStartD    = parseDate(depEffStart);
+    if (!depStartD) return;
+    const depEndX      = (daysBetween(ganttStart, depStartD) + depTage) * cellPx;
+
+    const rowEffStart  = getEffStart(row);
+    const rowStartD    = parseDate(rowEffStart);
+    if (!rowStartD) return;
+    const rowStartX    = daysBetween(ganttStart, rowStartD) * cellPx;
+
+    // Y centres of each row
+    const depY  = headerH + depIdx * rowH + rowH / 2;
+    const rowY  = headerH + rowIdx * rowH + rowH / 2;
+
+    // L-shaped path: down from dep end → across to row start
+    const midX = depEndX + 6; // a little gap after bar end
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('class','dep-arrow');
+    path.setAttribute('d',
+      `M ${depEndX} ${depY} L ${midX} ${depY} L ${midX} ${rowY} L ${rowStartX} ${rowY}`
+    );
+    svg.appendChild(path);
   });
 }
 
