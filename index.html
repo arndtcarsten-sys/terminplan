@@ -164,7 +164,7 @@
   <button class="tb-btn success" onclick="addGroupRow()">+ Gruppe</button>
   <button class="tb-btn" onclick="resetPlan()">Neu</button>
   <div class="tb-sep"></div>
-  <button class="tb-btn" onclick="saveAsFile()">💾 Speichern</button>
+  <button class="tb-btn" onclick="saveAsFile()">&#128190; Speichern</button>
   <button class="tb-btn primary" onclick="exportPDF()">PDF Export</button>
 </div>
 
@@ -198,10 +198,13 @@
 </div>
 
 <div id="footer">
-  <span>✓ Haken / Doppelklick Balken = erledigt &nbsp;|&nbsp; + an Zeile = Untervorgang</span>
-  <span>Balken ziehen = verschieben &nbsp;|&nbsp; Rechter Rand = verlängern</span>
+  <span>&#10003; Haken / Doppelklick Balken = erledigt &nbsp;|&nbsp; + an Zeile = Untervorgang</span>
+  <span>Balken ziehen = verschieben &nbsp;|&nbsp; Rechter Rand = verl&#228;ngern</span>
   <span id="statusText"></span>
 </div>
+
+<!-- SAVED DATA (injected by saveAsFile, read by loadState) -->
+<script id="gantt-data" type="application/json"></script>
 
 <script>
 const COLORS = {
@@ -212,7 +215,7 @@ const COLORS = {
 const COL_W = { day:24, week:16, month:6 };
 
 let scale = 'week', cellPx = COL_W.week;
-let rows = [];   // {id, parentId, isGroup, collapsed, vorgang, abh, verz, start, tage, farbe, done}
+let rows = [];
 let nextId = 1;
 let ganttStart = null, ganttEnd = null;
 
@@ -633,65 +636,152 @@ function initResizer(){
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 
-function saveState(){
-  try{localStorage.setItem('gantt_rows',JSON.stringify(rows));localStorage.setItem('gantt_nextId',nextId);localStorage.setItem('gantt_scale',scale);}catch(e){}
+function loadState(){
+  // 1. Try embedded data tag (present in saved .html files)
+  try {
+    const tag = document.getElementById('gantt-data');
+    const txt = tag && tag.textContent.trim();
+    if (txt) {
+      const s = JSON.parse(txt);
+      rows = s.rows; nextId = s.nextId; scale = s.scale;
+      cellPx = COL_W[scale] || COL_W.week;
+      document.getElementById('scaleSelect').value = scale;
+      return;
+    }
+  } catch(e) { console.warn('Embedded state error', e); }
+  // 2. Fallback: localStorage
+  try {
+    const r = localStorage.getItem('gantt_rows');
+    const n = localStorage.getItem('gantt_nextId');
+    const s = localStorage.getItem('gantt_scale');
+    if (r) rows = JSON.parse(r);
+    if (n) nextId = +n;
+    if (s) { scale = s; document.getElementById('scaleSelect').value = s; cellPx = COL_W[s] || COL_W.week; }
+  } catch(e) {}
 }
 
-function loadState(){
-  try{
-    const r=localStorage.getItem('gantt_rows'),n=localStorage.getItem('gantt_nextId'),s=localStorage.getItem('gantt_scale');
-    if(r) rows=JSON.parse(r); if(n) nextId=+n;
-    if(s){scale=s;document.getElementById('scaleSelect').value=s;cellPx=COL_W[s]||COL_W.week;}
-  }catch(e){}
+function saveState(){
+  try {
+    localStorage.setItem('gantt_rows', JSON.stringify(rows));
+    localStorage.setItem('gantt_nextId', nextId);
+    localStorage.setItem('gantt_scale', scale);
+  } catch(e) {}
 }
 
 // ── SAVE AS FILE ───────────────────────────────────────────────────────────
+// Reads the page source via fetch() — works for file:// and http://.
+// Injects current data into the <script id="gantt-data"> tag and downloads.
 
-function saveAsFile(){
-  let html=document.documentElement.outerHTML;
-  const stateJson=JSON.stringify({rows,nextId,scale});
-  const marker='// ─── INIT ──────────────────────────────────────────────────────────────────';
-  const inject=`// ─── EMBEDDED STATE ───────────────────────────────────────────────────────
-(function(){try{const s=${stateJson};rows=s.rows;nextId=s.nextId;scale=s.scale;cellPx=COL_W[scale]||COL_W.week;document.getElementById('scaleSelect').value=scale;}catch(e){}})();
-${marker}`;
-  html=html.replace(marker,inject);
-  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  const d=new Date();
-  a.download=`terminplan_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.html`;
-  a.click(); URL.revokeObjectURL(a.href);
-  document.getElementById('statusText').textContent='Gespeichert ✓';
-  setTimeout(()=>document.getElementById('statusText').textContent='',2000);
+async function saveAsFile(){
+  try {
+    const resp = await fetch(location.href);
+    let src = await resp.text();
+
+    // Inject data using simple string split — no regex, no escape issues
+    const TAG_OPEN  = '<script id="gantt-data" type="application/json">';
+    const TAG_CLOSE = '<\/script>';
+    const stateJson = JSON.stringify({rows, nextId, scale});
+    const start = src.indexOf(TAG_OPEN);
+    const end   = src.indexOf(TAG_CLOSE, start + TAG_OPEN.length);
+    src = src.slice(0, start + TAG_OPEN.length) + stateJson + src.slice(end);
+
+    const d = new Date();
+    const name = 'terminplan_' + d.getFullYear() + '-' +
+      String(d.getMonth()+1).padStart(2,'0') + '-' +
+      String(d.getDate()).padStart(2,'0') + '.html';
+    const blob = new Blob([src], {type: 'text/html;charset=utf-8'});
+
+    if (window.showSaveFilePicker) {
+      try {
+        const fh = await window.showSaveFilePicker({
+          suggestedName: name,
+          types: [{ description: 'HTML Datei', accept: {'text/html': ['.html']} }],
+        });
+        const ws = await fh.createWritable();
+        await ws.write(blob);
+        await ws.close();
+        document.getElementById('statusText').textContent = 'Gespeichert \u2713';
+        setTimeout(()=>document.getElementById('statusText').textContent='', 2000);
+        return;
+      } catch(e) { if (e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    document.getElementById('statusText').textContent = 'Gespeichert \u2713';
+    setTimeout(()=>document.getElementById('statusText').textContent='', 2000);
+
+  } catch(err) {
+    saveAsFileInline();
+  }
+}
+
+// Inline fallback: builds file from stored template string
+// TEMPLATE_START and TEMPLATE_END are set once at page load (see bottom)
+let _tmplStart = '', _tmplEnd = '';
+
+function saveAsFileInline(){
+  const TAG_OPEN  = '<script id="gantt-data" type="application/json">';
+  const TAG_CLOSE = '<\/script>';
+  const stateJson = JSON.stringify({rows, nextId, scale});
+  const start = _tmplStart.length; // _tmplStart ends right after TAG_OPEN
+  const src = _tmplStart + stateJson + _tmplEnd;
+  const d = new Date();
+  const name = 'terminplan_' + d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0') + '.html';
+  const blob = new Blob([src], {type: 'text/html;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  document.getElementById('statusText').textContent = 'Gespeichert \u2713';
+  setTimeout(()=>document.getElementById('statusText').textContent='', 2000);
 }
 
 function exportPDF(){
   document.getElementById('statusText').textContent='PDF-Export...';
-  setTimeout(()=>{window.print();document.getElementById('statusText').textContent='';},100);
+  setTimeout(()=>{ window.print(); document.getElementById('statusText').textContent=''; }, 100);
 }
 
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ─── INIT ──────────────────────────────────────────────────────────────────
+// ── INIT ───────────────────────────────────────────────────────────────────
 
 loadState();
 initResizer();
 
 if(rows.length===0){
   const today=new Date();
-  // Group 1: Planung
-  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Planung',          abh:'',    verz:'0',start:fmtDate(today),tage:'1', farbe:'Dunkelblau',done:false});
-  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Konzept',            abh:'',    verz:'0',start:fmtDate(today),tage:'10',farbe:'Blau',      done:false});
-  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Genehmigung',        abh:'1.1', verz:'0',start:'',            tage:'5', farbe:'Lila',      done:false});
-  // Group 2: Ausführung
-  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Ausführung',        abh:'1',   verz:'0',start:fmtDate(today),tage:'1', farbe:'Anthrazit', done:false});
-  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'HLKS Planung',       abh:'1.2', verz:'2',start:'',            tage:'15',farbe:'Türkis',    done:false});
-  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Rohbau',             abh:'1.2', verz:'0',start:'',            tage:'30',farbe:'Grün',      done:false});
-  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Innenausbau',        abh:'2.2', verz:'-7',start:'',           tage:'20',farbe:'Orange',    done:false});
-  // Standalone
-  rows.push({id:nextId++,parentId:null,isGroup:false,collapsed:false,vorgang:'Abnahme & Übergabe',abh:'2',   verz:'0',start:'',            tage:'3', farbe:'Rot',       done:false});
+  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Planung',           abh:'',    verz:'0',start:fmtDate(today),tage:'1', farbe:'Dunkelblau',done:false});
+  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Konzept',             abh:'',    verz:'0',start:fmtDate(today),tage:'10',farbe:'Blau',      done:false});
+  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Genehmigung',         abh:'1.1', verz:'0',start:'',            tage:'5', farbe:'Lila',      done:false});
+  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Ausf\u00fchrung',   abh:'1',   verz:'0',start:fmtDate(today),tage:'1', farbe:'Anthrazit', done:false});
+  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'HLKS Planung',        abh:'1.2', verz:'2',start:'',            tage:'15',farbe:'T\u00fcrkis',done:false});
+  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Rohbau',              abh:'1.2', verz:'0',start:'',            tage:'30',farbe:'Gr\u00fcn',  done:false});
+  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Innenausbau',         abh:'2.2', verz:'-7',start:'',           tage:'20',farbe:'Orange',    done:false});
+  rows.push({id:nextId++,parentId:null,isGroup:false,collapsed:false,vorgang:'Abnahme & \u00dcbergabe',abh:'2',verz:'0',start:'',tage:'3',farbe:'Rot',done:false});
 }
 
 renderAll();
+
+// Store split template for inline fallback save
+// Split point is the gantt-data script tag
+(function(){
+  const full = document.documentElement.outerHTML;
+  const tag  = '<script id="gantt-data" type="application/json">';
+  const idx  = full.indexOf(tag);
+  if (idx >= 0) {
+    _tmplStart = full.substring(0, idx + tag.length);
+    const endTag = '</scr' + 'ipt>';
+    const endIdx = full.indexOf(endTag, idx + tag.length);
+    _tmplEnd = full.substring(endIdx);
+  }
+})();
+
 </script>
 </body>
 </html>
