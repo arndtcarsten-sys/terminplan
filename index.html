@@ -22,7 +22,9 @@
   body { font-family: var(--font-sans); background: var(--bg); color: var(--text); font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
   #topbar { background: var(--header-bg); color: var(--header-text); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; border-bottom: 2px solid var(--accent); }
-  #topbar h1 { font-family: var(--font-mono); font-size: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; flex: 1; }
+  #topbar h1 { font-family: var(--font-mono); font-size: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; flex: 1; border-radius: 2px; padding: 2px 4px; outline: none; cursor: text; }
+  #topbar h1:hover { background: rgba(255,255,255,.08); }
+  #topbar h1:focus { background: rgba(255,255,255,.12); box-shadow: 0 0 0 1px rgba(244,243,240,.3); }
   .tb-btn { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .05em; background: transparent; border: 1px solid rgba(244,243,240,.3); color: var(--header-text); padding: 5px 11px; cursor: pointer; border-radius: var(--radius); transition: background .15s; white-space: nowrap; }
   .tb-btn:hover { background: rgba(255,255,255,.1); border-color: rgba(244,243,240,.6); }
   .tb-btn.primary { background: var(--accent); border-color: var(--accent); }
@@ -150,7 +152,7 @@
 <body>
 
 <div id="topbar">
-  <h1>Terminplan // Gantt</h1>
+  <h1 id="planTitle" contenteditable="true" spellcheck="false" title="Titel bearbeiten">Terminplan // Gantt</h1>
   <div class="scale-wrap">
     <label>Skala</label>
     <select id="scaleSelect" onchange="setScale(this.value)">
@@ -164,7 +166,8 @@
   <button class="tb-btn success" onclick="addGroupRow()">+ Gruppe</button>
   <button class="tb-btn" onclick="resetPlan()">Neu</button>
   <div class="tb-sep"></div>
-  <button class="tb-btn" onclick="saveAsFile()">&#128190; Speichern</button>
+  <button class="tb-btn" onclick="exportJSON()">&#128190; Speichern</button>
+  <label class="tb-btn" style="cursor:pointer" title="Projekt laden">&#128194; Laden<input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(this)"></label>
   <button class="tb-btn primary" onclick="exportPDF()">PDF Export</button>
 </div>
 
@@ -202,9 +205,6 @@
   <span>Balken ziehen = verschieben &nbsp;|&nbsp; Rechter Rand = verl&#228;ngern</span>
   <span id="statusText"></span>
 </div>
-
-<!-- SAVED DATA (injected by saveAsFile, read by loadState) -->
-<script id="gantt-data" type="application/json"></script>
 
 <script>
 const COLORS = {
@@ -636,103 +636,56 @@ function initResizer(){
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 
-function loadState(){
-  // 1. Try embedded data tag (present in saved .html files)
-  try {
-    const tag = document.getElementById('gantt-data');
-    const txt = tag && tag.textContent.trim();
-    if (txt) {
-      const s = JSON.parse(txt);
-      rows = s.rows; nextId = s.nextId; scale = s.scale;
-      cellPx = COL_W[scale] || COL_W.week;
-      document.getElementById('scaleSelect').value = scale;
-      return;
-    }
-  } catch(e) { console.warn('Embedded state error', e); }
-  // 2. Fallback: localStorage
-  try {
-    const r = localStorage.getItem('gantt_rows');
-    const n = localStorage.getItem('gantt_nextId');
-    const s = localStorage.getItem('gantt_scale');
-    if (r) rows = JSON.parse(r);
-    if (n) nextId = +n;
-    if (s) { scale = s; document.getElementById('scaleSelect').value = s; cellPx = COL_W[s] || COL_W.week; }
-  } catch(e) {}
-}
-
 function saveState(){
   try {
     localStorage.setItem('gantt_rows', JSON.stringify(rows));
     localStorage.setItem('gantt_nextId', nextId);
     localStorage.setItem('gantt_scale', scale);
+    localStorage.setItem('gantt_title', document.getElementById('planTitle').textContent);
   } catch(e) {}
 }
 
-// ── SAVE AS FILE ───────────────────────────────────────────────────────────
-// Reads the page source via fetch() — works for file:// and http://.
-// Injects current data into the <script id="gantt-data"> tag and downloads.
-
-async function saveAsFile(){
+function loadState(){
   try {
-    const resp = await fetch(location.href);
-    let src = await resp.text();
-
-    // Inject data using simple string split — no regex, no escape issues
-    const TAG_OPEN  = '<script id="gantt-data" type="application/json">';
-    const TAG_CLOSE = '<\/script>';
-    const stateJson = JSON.stringify({rows, nextId, scale});
-    const start = src.indexOf(TAG_OPEN);
-    const end   = src.indexOf(TAG_CLOSE, start + TAG_OPEN.length);
-    src = src.slice(0, start + TAG_OPEN.length) + stateJson + src.slice(end);
-
-    const d = new Date();
-    const name = 'terminplan_' + d.getFullYear() + '-' +
-      String(d.getMonth()+1).padStart(2,'0') + '-' +
-      String(d.getDate()).padStart(2,'0') + '.html';
-    const blob = new Blob([src], {type: 'text/html;charset=utf-8'});
-
-    if (window.showSaveFilePicker) {
-      try {
-        const fh = await window.showSaveFilePicker({
-          suggestedName: name,
-          types: [{ description: 'HTML Datei', accept: {'text/html': ['.html']} }],
-        });
-        const ws = await fh.createWritable();
-        await ws.write(blob);
-        await ws.close();
-        document.getElementById('statusText').textContent = 'Gespeichert \u2713';
-        setTimeout(()=>document.getElementById('statusText').textContent='', 2000);
-        return;
-      } catch(e) { if (e.name === 'AbortError') return; }
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    document.getElementById('statusText').textContent = 'Gespeichert \u2713';
-    setTimeout(()=>document.getElementById('statusText').textContent='', 2000);
-
-  } catch(err) {
-    saveAsFileInline();
-  }
+    const r = localStorage.getItem('gantt_rows');
+    const n = localStorage.getItem('gantt_nextId');
+    const s = localStorage.getItem('gantt_scale');
+    const t = localStorage.getItem('gantt_title');
+    if (r) rows = JSON.parse(r);
+    if (n) nextId = +n;
+    if (s) { scale = s; document.getElementById('scaleSelect').value = s; cellPx = COL_W[s] || COL_W.week; }
+    if (t) document.getElementById('planTitle').textContent = t;
+  } catch(e) {}
 }
 
-// Inline fallback: builds file from stored template string
-// TEMPLATE_START and TEMPLATE_END are set once at page load (see bottom)
-let _tmplStart = '', _tmplEnd = '';
+// ── JSON EXPORT / IMPORT ───────────────────────────────────────────────────
 
-function saveAsFileInline(){
-  const TAG_OPEN  = '<script id="gantt-data" type="application/json">';
-  const TAG_CLOSE = '<\/script>';
-  const stateJson = JSON.stringify({rows, nextId, scale});
-  const start = _tmplStart.length; // _tmplStart ends right after TAG_OPEN
-  const src = _tmplStart + stateJson + _tmplEnd;
+function exportJSON(){
+  const title = document.getElementById('planTitle').textContent;
+  const data = JSON.stringify({title, rows, nextId, scale}, null, 2);
   const d = new Date();
   const name = 'terminplan_' + d.getFullYear() + '-' +
     String(d.getMonth()+1).padStart(2,'0') + '-' +
-    String(d.getDate()).padStart(2,'0') + '.html';
-  const blob = new Blob([src], {type: 'text/html;charset=utf-8'});
+    String(d.getDate()).padStart(2,'0') + '.json';
+  const blob = new Blob([data], {type: 'application/json'});
+
+  if (window.showSaveFilePicker) {
+    window.showSaveFilePicker({
+      suggestedName: name,
+      types: [{ description: 'JSON Datei', accept: {'application/json': ['.json']} }],
+    }).then(fh => fh.createWritable()).then(ws => {
+      ws.write(blob); return ws;
+    }).then(ws => {
+      ws.close();
+      document.getElementById('statusText').textContent = 'Gespeichert \u2713';
+      setTimeout(()=>document.getElementById('statusText').textContent='', 2000);
+    }).catch(e => { if (e.name !== 'AbortError') fallbackDownload(blob, name); });
+    return;
+  }
+  fallbackDownload(blob, name);
+}
+
+function fallbackDownload(blob, name){
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -742,14 +695,39 @@ function saveAsFileInline(){
   setTimeout(()=>document.getElementById('statusText').textContent='', 2000);
 }
 
+function importJSON(input){
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const s = JSON.parse(e.target.result);
+      if (!s.rows) throw new Error('Ungültiges Format');
+      rows = s.rows;
+      nextId = s.nextId || (Math.max(0, ...rows.map(r=>r.id)) + 1);
+      scale = s.scale || 'week';
+      cellPx = COL_W[scale] || COL_W.week;
+      document.getElementById('scaleSelect').value = scale;
+      if (s.title) document.getElementById('planTitle').textContent = s.title;
+      renderAll();
+      document.getElementById('statusText').textContent = 'Geladen \u2713 – ' + file.name;
+      setTimeout(()=>document.getElementById('statusText').textContent='', 3000);
+    } catch(err) {
+      alert('Fehler beim Laden: ' + err.message);
+    }
+    input.value = ''; // reset so same file can be loaded again
+  };
+  reader.readAsText(file);
+}
+
+// ── UTILS / INIT ───────────────────────────────────────────────────────────
+
 function exportPDF(){
   document.getElementById('statusText').textContent='PDF-Export...';
   setTimeout(()=>{ window.print(); document.getElementById('statusText').textContent=''; }, 100);
 }
 
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-// ── INIT ───────────────────────────────────────────────────────────────────
 
 loadState();
 initResizer();
@@ -767,21 +745,6 @@ if(rows.length===0){
 }
 
 renderAll();
-
-// Store split template for inline fallback save
-// Split point is the gantt-data script tag
-(function(){
-  const full = document.documentElement.outerHTML;
-  const tag  = '<script id="gantt-data" type="application/json">';
-  const idx  = full.indexOf(tag);
-  if (idx >= 0) {
-    _tmplStart = full.substring(0, idx + tag.length);
-    const endTag = '</scr' + 'ipt>';
-    const endIdx = full.indexOf(endTag, idx + tag.length);
-    _tmplEnd = full.substring(endIdx);
-  }
-})();
-
 </script>
 </body>
 </html>
