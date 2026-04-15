@@ -15,7 +15,7 @@
     --radius: 3px;
     --font-mono: 'IBM Plex Mono', monospace; --font-sans: 'IBM Plex Sans', sans-serif;
     --col-nr: 64px; --col-vorgang: 200px; --col-abh: 70px; --col-verz: 70px;
-    --col-start: 96px; --col-tage: 54px; --col-ende: 96px; --col-farbe: 120px;
+    --col-start: 96px; --col-tage: 54px; --col-ende: 96px; --col-farbe: 120px; --col-zust: 120px;
     --row-h: 36px; --header-h: 28px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -39,8 +39,8 @@
   #main { display: flex; flex: 1; overflow: hidden; }
 
   #left-panel { display: flex; flex-direction: column; flex-shrink: 0; flex-grow: 0; background: var(--surface); overflow: hidden; z-index: 10; box-shadow: 2px 0 6px rgba(0,0,0,.06); }
-  #left-header { display: flex; background: var(--header-bg); color: var(--header-text); font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; flex-shrink: 0; height: calc(var(--header-h)*2 + 1px); border-bottom: 2px solid var(--border-dark); align-items: flex-end; }
-  .lh-cell { padding: 0 6px 4px; border-right: 1px solid rgba(244,243,240,.15); height: 100%; display: flex; align-items: flex-end; white-space: nowrap; }
+  #left-header { display: flex; background: var(--header-bg); color: var(--header-text); font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; flex-shrink: 0; height: calc(var(--header-h)*2 + 1px); border-bottom: 2px solid var(--border-dark); align-items: flex-end; overflow: hidden; }
+  .lh-cell { padding: 0 6px 4px; border-right: 1px solid rgba(244,243,240,.15); height: 100%; display: flex; align-items: flex-end; white-space: nowrap; flex-shrink: 0; overflow: hidden; }
   .lh-cell-check { width: 32px; flex-shrink: 0; border-right: 1px solid rgba(244,243,240,.15); height: 100%; }
   #left-body { overflow-y: auto; overflow-x: hidden; flex: 1; }
   #left-body::-webkit-scrollbar { width: 6px; }
@@ -92,6 +92,7 @@
   .cell-tage { width: var(--col-tage); }
   .cell-ende { width: var(--col-ende); }
   .cell-farbe { width: var(--col-farbe); }
+  .cell-zust  { width: var(--col-zust); }
   .color-dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.15); }
   .del-btn { width: 22px; height: 22px; background: none; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; color: #c0392b; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0; transition: opacity .15s; }
   .table-row:hover .del-btn { opacity: 1; }
@@ -242,6 +243,7 @@
     </select>
   </div>
   <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="undo()" id="undoBtn" title="Rückgängig (Ctrl+Z)" style="opacity:0.5" disabled>↩ Zurück</button>
   <button class="tb-btn" onclick="addRow()">+ Vorgang</button>
   <button class="tb-btn success" onclick="addGroupRow()">+ Gruppe</button>
   <button class="tb-btn" onclick="resetPlan()">Neu</button>
@@ -265,7 +267,8 @@
       <div class="lh-cell cell-tage">Tage</div>
       <div class="lh-cell cell-ende">Ende</div>
       <div class="lh-cell cell-farbe">Farbe</div>
-      <div class="lh-cell" style="width:28px"></div>
+      <div class="lh-cell cell-zust">Zuständig</div>
+      <div class="lh-cell" style="width:28px;flex-shrink:0"></div>
     </div>
     <div id="left-body"></div>
   </div>
@@ -307,6 +310,36 @@ let scale = 'week', cellPx = COL_W.week;
 let rows = [];
 let nextId = 1;
 let ganttStart = null, ganttEnd = null;
+let undoStack = [];  // stores snapshots for undo
+
+function pushUndo() {
+  undoStack.push({
+    rows: JSON.parse(JSON.stringify(rows)),
+    nextId,
+    scale,
+    title: document.getElementById('planTitle')?.textContent || ''
+  });
+  if (undoStack.length > 30) undoStack.shift(); // max 30 steps
+  updateUndoBtn();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  const snap = undoStack.pop();
+  rows = snap.rows; nextId = snap.nextId; scale = snap.scale;
+  cellPx = COL_W[scale] || COL_W.week;
+  document.getElementById('scaleSelect').value = scale;
+  if (snap.title) document.getElementById('planTitle').textContent = snap.title;
+  updateUndoBtn();
+  renderAll();
+}
+
+function updateUndoBtn() {
+  const btn = document.getElementById('undoBtn');
+  if (!btn) return;
+  btn.disabled = undoStack.length === 0;
+  btn.style.opacity = undoStack.length === 0 ? '0.5' : '1';
+}
 
 // ── NUMBERING ──────────────────────────────────────────────────────────────
 
@@ -381,8 +414,9 @@ function setScale(s){ scale=s; cellPx=COL_W[s]; renderAll(); }
 // ── ROW OPS ────────────────────────────────────────────────────────────────
 
 function addRow(afterId) {
+  pushUndo();
   const row = { id:nextId++, parentId:null, isGroup:false, collapsed:false,
-    vorgang:'Neuer Vorgang', abh:'', verz:'0', start:fmtDate(new Date()), tage:'10', farbe:'Blau', done:false };
+    vorgang:'Neuer Vorgang', abh:'', verz:'0', start:fmtDate(new Date()), tage:'10', farbe:'Blau', zust:'', done:false };
   if (afterId != null) {
     let idx = rows.findIndex(r => r.id === afterId) + 1;
     while (idx < rows.length && rows[idx].parentId === afterId) idx++;
@@ -393,21 +427,23 @@ function addRow(afterId) {
 }
 
 function addGroupRow() {
+  pushUndo();
   const row = { id:nextId++, parentId:null, isGroup:true, collapsed:false,
-    vorgang:'Neue Gruppe', abh:'', verz:'0', start:fmtDate(new Date()), tage:'1', farbe:'Anthrazit', done:false };
+    vorgang:'Neue Gruppe', abh:'', verz:'0', start:fmtDate(new Date()), tage:'1', farbe:'Anthrazit', zust:'', done:false };
   rows.push(row);
   renderAll();
   focus(row.id);
 }
 
 function addSubRow(parentId) {
+  pushUndo();
   const parent = rows.find(r => r.id === parentId);
   if (!parent) return;
   parent.isGroup = true; parent.collapsed = false;
   const kids = rows.filter(r => r.parentId === parentId);
   const last = kids[kids.length-1];
   const row = { id:nextId++, parentId, isGroup:false, collapsed:false,
-    vorgang:'Untervorgang', abh:'', verz:'0', start:fmtDate(new Date()), tage:'5', farbe:parent.farbe, done:false };
+    vorgang:'Untervorgang', abh:'', verz:'0', start:fmtDate(new Date()), tage:'5', farbe:parent.farbe, zust:'', done:false };
   const idx = last ? rows.indexOf(last)+1 : rows.indexOf(parent)+1;
   rows.splice(idx, 0, row);
   renderAll();
@@ -422,7 +458,30 @@ function focus(id) {
 }
 
 function deleteRow(id) {
+  pushUndo();
+
+  // Before deleting: snapshot which row each dependency points to (by ID)
+  rows.forEach(r => {
+    if (!r.abh) return;
+    const depRow = rows.find(x => displayNr(x) === String(r.abh));
+    r._depId = depRow ? depRow.id : null;
+  });
+
+  // Remove the row and its children
   rows = rows.filter(r => r.id !== id && r.parentId !== id);
+
+  // After deletion, display numbers have changed — remap abh using stored IDs
+  rows.forEach(r => {
+    if (r._depId === undefined) return;
+    if (r._depId === null) {
+      r.abh = ''; // dependency was pointing to a deleted row
+    } else {
+      const depRow = rows.find(x => x.id === r._depId);
+      r.abh = depRow ? displayNr(depRow) : '';
+    }
+    delete r._depId;
+  });
+
   renderAll();
 }
 
@@ -432,17 +491,20 @@ function toggleCollapse(id) {
 }
 
 function updateRow(id, field, value) {
+  pushUndo();
   const r = rows.find(r => r.id === id);
   if (r) { r[field] = value; renderAll(); }
 }
 
 function toggleDone(id) {
+  pushUndo();
   const r = rows.find(r => r.id === id);
   if (r) { r.done = !r.done; renderAll(); }
 }
 
 function resetPlan() {
   if (rows.length && !confirm('Terminplan zurücksetzen?')) return;
+  pushUndo();
   rows = []; nextId = 1;
   const today = new Date();
   rows.push({ id:nextId++, parentId:null, isGroup:true, collapsed:false, vorgang:'Neues Projekt', abh:'', verz:'0', start:fmtDate(today), tage:'1', farbe:'Anthrazit', done:false });
@@ -538,6 +600,7 @@ function renderTableRows() {
         <div class="color-dot" style="background:${COLORS[row.farbe]||'#555'}"></div>
         <select onchange="updateRow(${row.id},'farbe',this.value)">${colorOpts}</select>
       </div>
+      <div class="cell cell-zust"><input type="text" value="${esc(row.zust||'')}" placeholder="–" onchange="updateRow(${row.id},'zust',this.value)"></div>
       <div class="cell" style="width:28px;border-right:none"><button class="del-btn" onclick="deleteRow(${row.id})">×</button></div>
     `;
     body.appendChild(div);
@@ -600,6 +663,7 @@ function initRowDrag(){
           if (fromIdx < 0 || toIdx < 0) { dragId=null; dragEl=null; return; }
 
           // Snapshot: for each row with a dependency, store the ID of the dep row
+          pushUndo();
           rows.forEach(r => {
             if (!r.abh) return;
             const depRow = rows.find(x => displayNr(x) === String(r.abh));
@@ -816,7 +880,7 @@ function makeDraggable(wrap, resizeHandle, row){
       const sx=e.clientX, ow=parseInt(wrap.style.width), ot=+row.tage||1;
       document.body.style.cursor='ew-resize';
       const mv=e2=>{ wrap.style.width=Math.max(cellPx,ow+e2.clientX-sx)+'px'; };
-      const up=e2=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); document.body.style.cursor=''; row.tage=String(Math.max(1,ot+Math.round((e2.clientX-sx)/cellPx))); renderAll(); };
+      const up=e2=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); document.body.style.cursor=''; pushUndo(); row.tage=String(Math.max(1,ot+Math.round((e2.clientX-sx)/cellPx))); renderAll(); };
       document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
     });
   }
@@ -839,8 +903,8 @@ function makeDraggable(wrap, resizeHandle, row){
       const ns=addDays(orig,delta);
       if(row.abh){
         const dep=rows.find(r=>displayNr(r)===String(row.abh));
-        if(dep){const de=parseDate(computeEnd(dep,getEffStart(dep)));if(de){row.verz=String(daysBetween(de,ns)-1);}}
-      } else { row.start=fmtDate(ns); }
+        if(dep){const de=parseDate(computeEnd(dep,getEffStart(dep)));if(de){pushUndo(); row.verz=String(daysBetween(de,ns)-1);}}
+      } else { pushUndo(); row.start=fmtDate(ns); }
       renderAll();
     };
     document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
@@ -994,17 +1058,28 @@ function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 
 loadState();
 initResizer();
+updateUndoBtn();
+
+// Ctrl+Z / Cmd+Z keyboard shortcut
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+    // Don't undo when typing in an input
+    if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
+    e.preventDefault();
+    undo();
+  }
+});
 
 if(rows.length===0){
   const today=new Date();
-  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Planung',           abh:'',    verz:'0',start:fmtDate(today),tage:'1', farbe:'Dunkelblau',done:false});
-  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Konzept',             abh:'',    verz:'0',start:fmtDate(today),tage:'10',farbe:'Blau',      done:false});
-  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Genehmigung',         abh:'1.1', verz:'0',start:'',            tage:'5', farbe:'Lila',      done:false});
-  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Ausf\u00fchrung',   abh:'1',   verz:'0',start:fmtDate(today),tage:'1', farbe:'Anthrazit', done:false});
-  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'HLKS Planung',        abh:'1.2', verz:'2',start:'',            tage:'15',farbe:'T\u00fcrkis',done:false});
-  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Rohbau',              abh:'1.2', verz:'0',start:'',            tage:'30',farbe:'Gr\u00fcn',  done:false});
-  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Innenausbau',         abh:'2.2', verz:'-7',start:'',           tage:'20',farbe:'Orange',    done:false});
-  rows.push({id:nextId++,parentId:null,isGroup:false,collapsed:false,vorgang:'Abnahme & \u00dcbergabe',abh:'2',verz:'0',start:'',tage:'3',farbe:'Rot',done:false});
+  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Planung',           abh:'',    verz:'0',start:fmtDate(today),tage:'1', farbe:'Dunkelblau',zust:'',done:false});
+  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Konzept',             abh:'',    verz:'0',start:fmtDate(today),tage:'10',farbe:'Blau',      zust:'',done:false});
+  rows.push({id:nextId++,parentId:1,  isGroup:false,collapsed:false,vorgang:'Genehmigung',         abh:'1.1', verz:'0',start:'',            tage:'5', farbe:'Lila',      zust:'',done:false});
+  rows.push({id:nextId++,parentId:null,isGroup:true, collapsed:false,vorgang:'Ausf\u00fchrung',   abh:'1',   verz:'0',start:fmtDate(today),tage:'1', farbe:'Anthrazit', zust:'',done:false});
+  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'HLKS Planung',        abh:'1.2', verz:'2',start:'',            tage:'15',farbe:'T\u00fcrkis',zust:'',done:false});
+  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Rohbau',              abh:'1.2', verz:'0',start:'',            tage:'30',farbe:'Gr\u00fcn',  zust:'',done:false});
+  rows.push({id:nextId++,parentId:4,  isGroup:false,collapsed:false,vorgang:'Innenausbau',         abh:'2.2', verz:'-7',start:'',           tage:'20',farbe:'Orange',    zust:'',done:false});
+  rows.push({id:nextId++,parentId:null,isGroup:false,collapsed:false,vorgang:'Abnahme & \u00dcbergabe',abh:'2',verz:'0',start:'',tage:'3',farbe:'Rot',zust:'',done:false});
 }
 
 renderAll();
