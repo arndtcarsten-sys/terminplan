@@ -160,7 +160,9 @@
   }
   .dep-arrow { stroke: rgba(80,80,80,0.45); stroke-width: 1.5; fill: none; marker-end: url(#dep-arrowhead); }
   
-  .gantt-label { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); white-space: nowrap; pointer-events: none; z-index: 3; }
+  .gantt-label { position: absolute; top: 50%; transform: translateY(-50%); font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); white-space: nowrap; pointer-events: none; z-index: 3; }
+  .gantt-label-right { left: calc(100% + 6px); }
+  .gantt-label-left  { right: calc(100% + 4px); text-align: right; }
   .gantt-bar-wrap.done .gantt-label { text-decoration: line-through; }
 
   #footer { background: var(--header-bg); color: rgba(244,243,240,.5); font-family: var(--font-mono); font-size: 10px; padding: 4px 16px; letter-spacing: .05em; flex-shrink: 0; display: flex; gap: 24px; }
@@ -729,10 +731,16 @@ function renderGanttRows(){
         const rh=document.createElement('div'); rh.className='gantt-resize-handle'; wrap.appendChild(rh);
       }
 
-      const label=document.createElement('div');
-      label.className='gantt-label';
-      label.textContent=fmtDate(startD)+'  '+row.vorgang;
-      wrap.appendChild(label);
+      const labelR = document.createElement('div');
+      labelR.className = 'gantt-label gantt-label-right';
+      labelR.textContent = fmtDate(addDays(parseDate(effStart), tage - 1)) + '  ' + row.vorgang;
+
+      const labelL = document.createElement('div');
+      labelL.className = 'gantt-label gantt-label-left';
+      labelL.textContent = fmtDate(startD);
+
+      wrap.appendChild(labelL);
+      wrap.appendChild(labelR);
 
       // dblclick → done
       wrap.addEventListener('dblclick', e => { if(!e.target.closest('.gantt-resize-handle')) toggleDone(row.id); });
