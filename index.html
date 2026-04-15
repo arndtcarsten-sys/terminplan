@@ -4,16 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Terminplan – Gantt</title>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-HX69SBW1DC"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-HX69SBW1DC');
-</script>
-  
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 
@@ -63,6 +53,19 @@
   .table-row.hidden-row { display: none; }
   .table-row.group-row { background: #e8e6e2 !important; }
   .table-row.group-row:hover { background: #dfddd8 !important; }
+  .table-row.dragging { opacity: .4; }
+  .table-row.drag-over-top { box-shadow: inset 0 2px 0 var(--accent); }
+  .table-row.drag-over-bot { box-shadow: inset 0 -2px 0 var(--accent); }
+
+  .row-drag-handle {
+    width: 18px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab; color: var(--border-dark); font-size: 13px;
+    opacity: 0; transition: opacity .15s; user-select: none;
+    border-right: 1px solid var(--border); height: 100%;
+  }
+  .table-row:hover .row-drag-handle { opacity: 1; }
+  .row-drag-handle:active { cursor: grabbing; }
 
   .cell { padding: 0 6px; border-right: 1px solid var(--border); height: 100%; display: flex; align-items: center; flex-shrink: 0; overflow: hidden; }
   .cell input, .cell select { width: 100%; border: none; outline: none; background: transparent; font-family: var(--font-sans); font-size: 12px; color: var(--text); padding: 0; }
@@ -169,9 +172,62 @@
     #right-panel { overflow: visible; }
     #gantt-header { position: static; }
   }
+
+  /* Feedback modal */
+  #feedback-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.5); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  #feedback-overlay.open { display: flex; }
+  #feedback-modal {
+    background: #fff; border-radius: 4px; padding: 28px;
+    width: 420px; max-width: 95vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,.25);
+    font-family: var(--font-sans);
+  }
+  #feedback-modal h2 {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+    letter-spacing: .06em; text-transform: uppercase; margin-bottom: 16px;
+    color: var(--text);
+  }
+  #feedback-modal textarea {
+    width: 100%; height: 120px; border: 1px solid var(--border-dark);
+    border-radius: 3px; padding: 10px; font-family: var(--font-sans);
+    font-size: 13px; color: var(--text); resize: vertical;
+    outline: none; line-height: 1.5;
+  }
+  #feedback-modal textarea:focus { border-color: var(--accent); }
+  #feedback-modal .modal-hint {
+    font-size: 11px; color: var(--text-muted); margin-top: 8px;
+  }
+  #feedback-modal .modal-btns {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+  }
+  .modal-btn {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    padding: 6px 14px; border-radius: 3px; cursor: pointer; border: none;
+  }
+  .modal-btn.cancel { background: var(--border); color: var(--text); }
+  .modal-btn.send   { background: var(--accent); color: white; }
+  .modal-btn.cancel:hover { background: var(--border-dark); }
+  .modal-btn.send:hover   { background: #1e3fa0; }
 </style>
 </head>
 <body>
+
+<!-- Feedback modal -->
+<div id="feedback-overlay">
+  <div id="feedback-modal">
+    <h2>💬 Verbesserungsvorschlag</h2>
+    <textarea id="feedback-text" placeholder="Was soll verbessert werden?"></textarea>
+    <p class="modal-hint">Wird per E-Mail an c.arndt@volare-group.com gesendet.</p>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeFeedback()">Abbrechen</button>
+      <button class="modal-btn send"   onclick="sendFeedback()">Senden</button>
+    </div>
+  </div>
+</div>
 
 <div id="topbar">
   <h1 id="planTitle" contenteditable="true" spellcheck="false" title="Titel bearbeiten">Terminplan // Gantt</h1>
@@ -188,6 +244,7 @@
   <button class="tb-btn success" onclick="addGroupRow()">+ Gruppe</button>
   <button class="tb-btn" onclick="resetPlan()">Neu</button>
   <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="openFeedback()" style="opacity:0.7">💬 Feedback</button>
   <button class="tb-btn" onclick="exportJSON()">&#128190; Speichern</button>
   <label class="tb-btn" style="cursor:pointer" title="Projekt laden">&#128194; Laden<input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(this)"></label>
   <button class="tb-btn primary" onclick="exportPDF()">PDF Export</button>
@@ -197,6 +254,7 @@
   <div id="left-panel">
     <div id="left-header">
       <div class="lh-cell-check"></div>
+      <div class="lh-cell" style="width:18px;border-right:1px solid rgba(244,243,240,.15)"></div>
       <div class="lh-cell cell-nr">Nr.</div>
       <div class="lh-cell cell-vorgang">Vorgang</div>
       <div class="lh-cell cell-abh">Abh.</div>
@@ -456,6 +514,7 @@ function renderTableRows() {
 
     div.innerHTML = `
       <div class="cell-check" onclick="toggleDone(${row.id})"><div class="check-box ${row.done?'checked':''}"></div></div>
+      <div class="row-drag-handle" title="Zeile verschieben">⠿</div>
       <div class="cell cell-nr ${row.isGroup?'group-nr':''}">${nr}</div>
       <div class="cell cell-vorgang">
         <div class="vorgang-inner">
@@ -480,6 +539,100 @@ function renderTableRows() {
       <div class="cell" style="width:28px;border-right:none"><button class="del-btn" onclick="deleteRow(${row.id})">×</button></div>
     `;
     body.appendChild(div);
+  });
+  initRowDrag();
+}
+
+function initRowDrag(){
+  const body = document.getElementById('left-body');
+  let dragId = null, dragEl = null;
+
+  body.querySelectorAll('.row-drag-handle').forEach(handle => {
+    handle.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragEl = handle.closest('.table-row');
+      dragId = +dragEl.dataset.id;
+
+      let moved = false;
+
+      const onMove = ev => {
+        if (!moved) {
+          // Only start drag visual after a small movement
+          const dx = Math.abs(ev.clientX - e.clientX);
+          const dy = Math.abs(ev.clientY - e.clientY);
+          if (dx < 4 && dy < 4) return;
+          moved = true;
+          dragEl.classList.add('dragging');
+          document.body.style.cursor = 'grabbing';
+          document.body.style.userSelect = 'none';
+        }
+        document.querySelectorAll('.table-row.drag-over-top,.table-row.drag-over-bot')
+          .forEach(r => r.classList.remove('drag-over-top','drag-over-bot'));
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        const target = el && el.closest('.table-row');
+        if (target && target !== dragEl) {
+          const rect = target.getBoundingClientRect();
+          target.classList.add(ev.clientY < rect.top + rect.height/2 ? 'drag-over-top' : 'drag-over-bot');
+        }
+      };
+
+      const onUp = ev => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        if (dragEl) dragEl.classList.remove('dragging');
+
+        if (!moved) { dragId = null; dragEl = null; return; }
+
+        const over = document.querySelector('.table-row.drag-over-top,.table-row.drag-over-bot');
+        if (over && over !== dragEl) {
+          const isTop = over.classList.contains('drag-over-top');
+          over.classList.remove('drag-over-top','drag-over-bot');
+
+          const targetId = +over.dataset.id;
+          const fromIdx  = rows.findIndex(r => r.id === dragId);
+          let   toIdx    = rows.findIndex(r => r.id === targetId);
+          if (fromIdx < 0 || toIdx < 0) { dragId=null; dragEl=null; return; }
+
+          // Snapshot: for each row with a dependency, store the ID of the dep row
+          rows.forEach(r => {
+            if (!r.abh) return;
+            const depRow = rows.find(x => displayNr(x) === String(r.abh));
+            r._depId = depRow ? depRow.id : null;
+          });
+
+          const dragRow  = rows[fromIdx];
+          const children = rows.filter(r => r.parentId === dragId);
+          const block    = [dragRow, ...children];
+          block.forEach(b => rows.splice(rows.indexOf(b), 1));
+          toIdx = rows.findIndex(r => r.id === targetId);
+          rows.splice(isTop ? toIdx : toIdx + 1, 0, ...block);
+
+          // Re-map all abh values: they store display numbers which change after reorder.
+          // We saved a snapshot of id→displayNr before the move, now remap to new numbers.
+          rows.forEach(r => {
+            if (!r.abh) return;
+            // Find the row whose OLD display number matched r.abh
+            const depRow = rows.find(x => x.id === r._depId);
+            if (depRow) r.abh = displayNr(depRow);
+          });
+          // Clean up temp field
+          rows.forEach(r => delete r._depId);
+
+          renderAll();
+        } else {
+          document.querySelectorAll('.table-row.drag-over-top,.table-row.drag-over-bot')
+            .forEach(r => r.classList.remove('drag-over-top','drag-over-bot'));
+        }
+        dragId = null; dragEl = null;
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
   });
 }
 
@@ -795,6 +948,32 @@ function importJSON(input){
   };
   reader.readAsText(file);
 }
+
+// ── FEEDBACK ───────────────────────────────────────────────────────────────
+
+function openFeedback(){
+  document.getElementById('feedback-text').value = '';
+  document.getElementById('feedback-overlay').classList.add('open');
+  setTimeout(()=>document.getElementById('feedback-text').focus(), 50);
+}
+
+function closeFeedback(){
+  document.getElementById('feedback-overlay').classList.remove('open');
+}
+
+function sendFeedback(){
+  const msg = document.getElementById('feedback-text').value.trim();
+  if (!msg) { document.getElementById('feedback-text').focus(); return; }
+  const subject = encodeURIComponent('Terminplan – Verbesserungsvorschlag');
+  const body    = encodeURIComponent(msg);
+  window.location.href = 'mailto:c.arndt@volare-group.com?subject=' + subject + '&body=' + body;
+  closeFeedback();
+}
+
+// Close on overlay click
+document.getElementById('feedback-overlay').addEventListener('click', function(e){
+  if (e.target === this) closeFeedback();
+});
 
 // ── UTILS / INIT ───────────────────────────────────────────────────────────
 
