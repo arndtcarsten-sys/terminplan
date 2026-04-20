@@ -168,6 +168,22 @@
 
   #footer { background: var(--header-bg); color: rgba(244,243,240,.5); font-family: var(--font-mono); font-size: 10px; padding: 4px 16px; letter-spacing: .05em; flex-shrink: 0; display: flex; gap: 24px; }
 
+  /* ── AUSLASTUNG MODE ── */
+  .aus-pct-cell {
+    position: absolute; top: 0; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-right: 1px solid rgba(0,0,0,.08); overflow: hidden; box-sizing: border-box;
+  }
+  .aus-pct-input {
+    width: 90%; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    text-align: center; border: none; outline: none; background: transparent;
+    color: var(--text); padding: 0; cursor: text; position: relative; z-index: 1;
+  }
+  .aus-pct-input:focus { background: rgba(255,255,255,.7); border-radius: 2px; }
+  .aus-pct-bar { position: absolute; bottom: 0; left: 0; right: 0; transition: height .2s; }
+  .aus-month-col-bg { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+  .aus-month-col-bg.alt { background: rgba(0,0,0,.02); }
+
   @media print {
     #topbar, #footer { display: none !important; }
     body { height: auto; overflow: visible; }
@@ -235,11 +251,12 @@
 <div id="topbar">
   <h1 id="planTitle" contenteditable="true" spellcheck="false" title="Titel bearbeiten">Terminplan // Gantt</h1>
   <div class="scale-wrap">
-    <label>Skala</label>
+    <label>Ansicht</label>
     <select id="scaleSelect" onchange="setScale(this.value)">
       <option value="day">Tage</option>
       <option value="week" selected>Wochen</option>
       <option value="month">Monate</option>
+      <option value="auslastung">Auslastung</option>
     </select>
   </div>
   <div class="tb-sep"></div>
@@ -268,6 +285,7 @@
       <div class="lh-cell cell-ende">Ende</div>
       <div class="lh-cell cell-farbe">Farbe</div>
       <div class="lh-cell cell-zust">Zuständig</div>
+      <div class="lh-cell" style="width:36px;flex-shrink:0;text-align:center" title="In Auslastung berücksichtigen">Aul.</div>
       <div class="lh-cell" style="width:28px;flex-shrink:0"></div>
     </div>
     <div id="left-body"></div>
@@ -304,10 +322,11 @@ const COLORS = {
   'Lila':'#8e44ad','Türkis':'#16a085','Grau':'#7f8c8d','Dunkelblau':'#1a3a6b',
   'Gelb':'#f39c12','Rosa':'#e91e8c','Anthrazit':'#2c3e50','Braun':'#795548',
 };
-const COL_W = { day:24, week:16, month:6 };
+const COL_W = { day:24, week:16, month:6, auslastung:6 };
 
 let scale = 'week', cellPx = COL_W.week;
 let rows = [];
+let ausData = {}; // { "rowId|YYYY-MM": pct }  — auslastung % per row per month
 let nextId = 1;
 let ganttStart = null, ganttEnd = null;
 let undoStack = [];  // stores snapshots for undo
@@ -409,7 +428,11 @@ function getGroupTage(row) {
 
 // ── SCALE ──────────────────────────────────────────────────────────────────
 
-function setScale(s){ scale=s; cellPx=COL_W[s]; renderAll(); }
+function setScale(s){
+  scale = s;
+  cellPx = COL_W[s] || COL_W.month;
+  renderAll();
+}
 
 // ── ROW OPS ────────────────────────────────────────────────────────────────
 
@@ -515,12 +538,14 @@ function resetPlan() {
 
 function computeDateRange() {
   const today = new Date();
-  let min = addDays(today,-7), max = addDays(today,90);
+  // Start from 4 weeks before the earliest row (or 4 weeks before today if no rows)
+  let min = addDays(today, -28);
+  let max = addDays(today, 90);
   rows.forEach(r => {
     const s = parseDate(getEffStart(r));
-    if (s && s < min) min = new Date(s);
+    if (s) { const padded = addDays(s, -28); if (padded < min) min = padded; }
     const e = parseDate(computeEnd(r, getEffStart(r)));
-    if (e) { const p = addDays(e,14); if (p>max) max=p; }
+    if (e) { const padded = addDays(e, 28); if (padded > max) max = padded; }
   });
   while (min.getDay()!==1) min.setDate(min.getDate()-1);
   while (max.getDay()!==0) max.setDate(max.getDate()+1);
@@ -539,8 +564,12 @@ function renderAll() {
   computeDateRange();
   renderTableRows();
   renderGanttHeader();
-  renderGanttRows();
-  renderDepArrows();
+  if (scale === 'auslastung') {
+    renderGanttRowsAuslastung();
+  } else {
+    renderGanttRows();
+    renderDepArrows();
+  }
   positionTodayLine();
   syncScroll();
   saveState();
@@ -601,6 +630,9 @@ function renderTableRows() {
         <select onchange="updateRow(${row.id},'farbe',this.value)">${colorOpts}</select>
       </div>
       <div class="cell cell-zust"><input type="text" value="${esc(row.zust||'')}" placeholder="–" onchange="updateRow(${row.id},'zust',this.value)"></div>
+      <div class="cell" style="width:36px;flex-shrink:0;justify-content:center;border-right:1px solid var(--border)">
+        <input type="checkbox" ${row.inAuslastung?'checked':''} title="In Auslastung" onchange="updateRow(${row.id},'inAuslastung',this.checked)" style="cursor:pointer;width:14px;height:14px">
+      </div>
       <div class="cell" style="width:28px;border-right:none"><button class="del-btn" onclick="deleteRow(${row.id})">×</button></div>
     `;
     body.appendChild(div);
@@ -862,6 +894,93 @@ function renderDepArrows(){
   });
 }
 
+// ── AUSLASTUNG MODE ────────────────────────────────────────────────────────
+
+function renderGanttRowsAuslastung() {
+  const body = document.getElementById('gantt-body');
+  body.innerHTML = '';
+  document.getElementById('dep-arrows').querySelectorAll('path').forEach(p=>p.remove());
+
+  const totalDays = daysBetween(ganttStart, ganttEnd) + 1;
+  const totalW    = totalDays * cellPx;
+
+  // Build list of months in range
+  const months = [];
+  let d = new Date(ganttStart.getFullYear(), ganttStart.getMonth(), 1);
+  while (d <= ganttEnd) {
+    months.push({ year: d.getFullYear(), month: d.getMonth() });
+    d.setMonth(d.getMonth() + 1);
+  }
+
+  rows.forEach((row, rowIdx) => {
+    const visible = isVisible(row);
+    const effStart = getEffStart(row);
+    const startD   = parseDate(effStart);
+
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'gantt-row' + (row.isGroup ? ' group-gantt-row' : '') + (!visible ? ' hidden-row' : '');
+    rowDiv.style.width = totalW + 'px';
+
+    months.forEach((m, mi) => {
+      const mStart = new Date(m.year, m.month, 1);
+      const mEnd   = new Date(m.year, m.month + 1, 0);
+      const x      = daysBetween(ganttStart, mStart) * cellPx;
+      const mDays  = daysBetween(mStart, mEnd) + 1;
+      const w      = mDays * cellPx;
+
+      // Is this row active in this month?
+      const rowStart = startD;
+      const rowEnd   = startD ? addDays(startD, (row.isGroup ? getGroupTage(row) : +row.tage||1) - 1) : null;
+      const active   = rowStart && rowEnd && rowStart <= mEnd && rowEnd >= mStart;
+
+      if (!active) return;
+
+      const key     = row.id + '|' + m.year + '-' + String(m.month+1).padStart(2,'0');
+      const pct     = ausData[key] !== undefined ? ausData[key] : null;
+      const color   = COLORS[row.farbe] || '#555';
+      const barH    = pct !== null ? Math.min(100, pct) : 0;
+
+      // alt background every other month
+      const bg = document.createElement('div');
+      bg.className = 'aus-month-col-bg' + (mi % 2 === 1 ? ' alt' : '');
+      bg.style.cssText = `position:absolute;top:0;bottom:0;left:${x}px;width:${w}px`;
+      rowDiv.appendChild(bg);
+
+      const cell = document.createElement('div');
+      cell.className = 'aus-pct-cell';
+      cell.style.cssText = `left:${x}px;width:${w}px`;
+
+      // coloured fill bar at bottom
+      const bar = document.createElement('div');
+      bar.className = 'aus-pct-bar';
+      bar.style.cssText = `height:${barH}%;background:${pct>100?'#e74c3c':pct>85?'#e67e22':color};opacity:0.35`;
+      cell.appendChild(bar);
+
+      // % input
+      const inp = document.createElement('input');
+      inp.className = 'aus-pct-input';
+      inp.type = 'number'; inp.min = 0; inp.max = 200;
+      inp.value = pct !== null ? pct : '';
+      inp.placeholder = '–';
+      inp.title = 'Auslastung ' + row.vorgang + ' ' + m.year + '/' + String(m.month+1).padStart(2,'0');
+      inp.addEventListener('change', () => {
+        const v = inp.value.trim();
+        if (v === '' || v === null) {
+          delete ausData[key];
+        } else {
+          ausData[key] = +v;
+        }
+        saveState();
+        renderGanttRowsAuslastung();
+      });
+      cell.appendChild(inp);
+      rowDiv.appendChild(cell);
+    });
+
+    body.appendChild(rowDiv);
+  });
+}
+
 function positionTodayLine(){
   const t=new Date(); t.setHours(0,0,0,0);
   if(!ganttStart) return;
@@ -943,6 +1062,7 @@ function saveState(){
     localStorage.setItem('gantt_nextId', nextId);
     localStorage.setItem('gantt_scale', scale);
     localStorage.setItem('gantt_title', document.getElementById('planTitle').textContent);
+    localStorage.setItem('gantt_ausData', JSON.stringify(ausData));
   } catch(e) {}
 }
 
@@ -952,10 +1072,12 @@ function loadState(){
     const n = localStorage.getItem('gantt_nextId');
     const s = localStorage.getItem('gantt_scale');
     const t = localStorage.getItem('gantt_title');
+    const a = localStorage.getItem('gantt_ausData');
     if (r) rows = JSON.parse(r);
     if (n) nextId = +n;
     if (s) { scale = s; document.getElementById('scaleSelect').value = s; cellPx = COL_W[s] || COL_W.week; }
     if (t) document.getElementById('planTitle').textContent = t;
+    if (a) ausData = JSON.parse(a);
   } catch(e) {}
 }
 
@@ -963,7 +1085,7 @@ function loadState(){
 
 function exportJSON(){
   const title = document.getElementById('planTitle').textContent;
-  const data = JSON.stringify({title, rows, nextId, scale}, null, 2);
+  const data = JSON.stringify({title, rows, nextId, scale, ausData}, null, 2);
   const d = new Date();
   const name = 'terminplan_' + d.getFullYear() + '-' +
     String(d.getMonth()+1).padStart(2,'0') + '-' +
@@ -1010,6 +1132,7 @@ function importJSON(input){
       cellPx = COL_W[scale] || COL_W.week;
       document.getElementById('scaleSelect').value = scale;
       if (s.title) document.getElementById('planTitle').textContent = s.title;
+      if (s.ausData) ausData = s.ausData; else ausData = {};
       renderAll();
       document.getElementById('statusText').textContent = 'Geladen \u2713 – ' + file.name;
       setTimeout(()=>document.getElementById('statusText').textContent='', 3000);
