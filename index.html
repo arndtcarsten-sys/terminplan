@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Terminplan – Gantt</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 
@@ -184,13 +186,21 @@
   .aus-month-col-bg { position: absolute; top: 0; bottom: 0; pointer-events: none; }
   .aus-month-col-bg.alt { background: rgba(0,0,0,.02); }
 
-  @media print {
-    #topbar, #footer { display: none !important; }
-    body { height: auto; overflow: visible; }
-    #main { overflow: visible; height: auto; }
-    #right-panel { overflow: visible; }
-    #gantt-header { position: static; }
-  }
+  /* ── PDF MODAL ── */
+  #pdf-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:300; align-items:center; justify-content:center; }
+  #pdf-overlay.open { display:flex; }
+  #pdf-modal { background:#fff; border-radius:4px; padding:28px; width:380px; max-width:95vw; box-shadow:0 8px 32px rgba(0,0,0,.25); font-family:var(--font-sans); }
+  #pdf-modal h2 { font-family:var(--font-mono); font-size:13px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; margin-bottom:20px; }
+  .pdf-opt-row { display:flex; flex-direction:column; gap:6px; margin-bottom:16px; }
+  .pdf-opt-row label { font-size:11px; font-weight:600; color:var(--text-muted); font-family:var(--font-mono); letter-spacing:.05em; text-transform:uppercase; }
+  .pdf-opt-row .btn-group { display:flex; gap:6px; }
+  .pdf-opt-btn { flex:1; padding:7px; font-family:var(--font-mono); font-size:11px; border:1px solid var(--border-dark); border-radius:3px; background:transparent; cursor:pointer; color:var(--text); transition:background .15s; }
+  .pdf-opt-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  #pdf-progress { display:none; margin-top:12px; font-family:var(--font-mono); font-size:11px; color:var(--text-muted); }
+  #pdf-progress-bar { height:3px; background:var(--border); border-radius:2px; margin-top:6px; }
+  #pdf-progress-fill { height:100%; background:var(--accent); border-radius:2px; transition:width .3s; width:0%; }
+
+  @media print { #topbar,#footer { display:none !important; } body { height:auto; overflow:visible; } #main { overflow:visible; height:auto; } #right-panel { overflow:visible; } #gantt-header { position:static; } }
 
   /* Feedback modal */
   #feedback-overlay {
@@ -234,6 +244,39 @@
 </style>
 </head>
 <body>
+
+<!-- PDF Export modal -->
+<div id="pdf-overlay">
+  <div id="pdf-modal">
+    <h2>📄 PDF Export</h2>
+    <div class="pdf-opt-row">
+      <label>Format</label>
+      <div class="btn-group">
+        <button class="pdf-opt-btn" id="pdf-landscape" onclick="setPdfOpt('orientation','landscape',this)">A4 Querformat</button>
+        <button class="pdf-opt-btn active" id="pdf-portrait" onclick="setPdfOpt('orientation','portrait',this)">A4 Hochformat</button>
+      </div>
+    </div>
+    <div class="pdf-opt-row">
+      <label>Skalierung</label>
+      <div class="btn-group">
+        <button class="pdf-opt-btn active" id="pdf-fit" onclick="setPdfOpt('scale','fit',this)">Auf Seite anpassen</button>
+        <button class="pdf-opt-btn" id="pdf-actual" onclick="setPdfOpt('scale','actual',this)">Originalgrösse</button>
+      </div>
+    </div>
+    <div class="pdf-opt-row">
+      <label>Inhalt</label>
+      <div class="btn-group">
+        <button class="pdf-opt-btn active" id="pdf-both" onclick="setPdfOpt('content','both',this)">Tabelle + Diagramm</button>
+        <button class="pdf-opt-btn" id="pdf-gantt-only" onclick="setPdfOpt('content','gantt',this)">Nur Diagramm</button>
+      </div>
+    </div>
+    <div id="pdf-progress"><span id="pdf-status-text">Wird erstellt...</span><div id="pdf-progress-bar"><div id="pdf-progress-fill"></div></div></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
+      <button class="modal-btn cancel" onclick="closePdfModal()">Abbrechen</button>
+      <button class="modal-btn send" id="pdf-export-btn" onclick="doExportPDF()">Export</button>
+    </div>
+  </div>
+</div>
 
 <!-- Feedback modal -->
 <div id="feedback-overlay">
@@ -1172,10 +1215,182 @@ document.getElementById('feedback-overlay').addEventListener('click', function(e
 
 // ── UTILS / INIT ───────────────────────────────────────────────────────────
 
-function exportPDF(){
-  document.getElementById('statusText').textContent='PDF-Export...';
-  setTimeout(()=>{ window.print(); document.getElementById('statusText').textContent=''; }, 100);
+// ── PDF EXPORT ─────────────────────────────────────────────────────────────
+
+const pdfOpts = { orientation: 'portrait', scale: 'fit', content: 'both' };
+
+function exportPDF() {
+  document.getElementById('pdf-overlay').classList.add('open');
+  document.getElementById('pdf-progress').style.display = 'none';
+  document.getElementById('pdf-progress-fill').style.width = '0%';
+  document.getElementById('pdf-export-btn').disabled = false;
 }
+
+function closePdfModal() {
+  document.getElementById('pdf-overlay').classList.remove('open');
+}
+
+function setPdfOpt(key, val, btn) {
+  pdfOpts[key] = val;
+  btn.closest('.btn-group').querySelectorAll('.pdf-opt-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+async function doExportPDF() {
+  const btn = document.getElementById('pdf-export-btn');
+  const progress = document.getElementById('pdf-progress');
+  const fill = document.getElementById('pdf-progress-fill');
+  const statusTxt = document.getElementById('pdf-status-text');
+
+  btn.disabled = true;
+  progress.style.display = 'block';
+  statusTxt.textContent = 'Wird gerendert...';
+  fill.style.width = '10%';
+
+  try {
+    // Determine what to capture
+    const captureLeft  = pdfOpts.content !== 'gantt';
+    const leftPanel    = document.getElementById('left-panel');
+    const resizer      = document.getElementById('resizer');
+    const rightPanel   = document.getElementById('right-panel');
+    const ganttBody    = document.getElementById('gantt-body');
+
+    // Temporarily make right panel show full scroll width
+    const origOverflow = rightPanel.style.overflow;
+    rightPanel.style.overflow = 'visible';
+    ganttBody.style.overflow  = 'visible';
+
+    fill.style.width = '25%';
+    statusTxt.textContent = 'Diagramm erfassen...';
+    await new Promise(r => setTimeout(r, 50));
+
+    // Build a wrapper div with both panels side by side for capture
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'display:flex;background:#fff;position:fixed;top:-99999px;left:-99999px;z-index:-1';
+
+    if (captureLeft) {
+      const lClone = leftPanel.cloneNode(true);
+      lClone.style.cssText = leftPanel.style.cssText + ';overflow:visible;height:auto';
+      wrapper.appendChild(lClone);
+    }
+
+    const rClone = document.getElementById('gantt-container').cloneNode(true);
+    rClone.style.cssText = 'background:#fff;overflow:visible';
+    // Fix sticky header
+    rClone.querySelector('#gantt-header').style.position = 'relative';
+    wrapper.appendChild(rClone);
+    document.body.appendChild(wrapper);
+
+    fill.style.width = '45%';
+    await new Promise(r => setTimeout(r, 100));
+
+    const canvas = await html2canvas(wrapper, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      onclone: (doc) => {
+        // Ensure background colors print
+        doc.querySelectorAll('[style*="background"]').forEach(el => {
+          el.style.webkitPrintColorAdjust = 'exact';
+          el.style.printColorAdjust = 'exact';
+        });
+      }
+    });
+
+    document.body.removeChild(wrapper);
+    rightPanel.style.overflow = origOverflow;
+    ganttBody.style.overflow  = '';
+
+    fill.style.width = '75%';
+    statusTxt.textContent = 'PDF erstellen...';
+    await new Promise(r => setTimeout(r, 50));
+
+    const { jsPDF } = window.jspdf;
+    const orientation = pdfOpts.orientation;
+    const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
+
+    const pageW = orientation === 'landscape' ? 297 : 210;
+    const pageH = orientation === 'landscape' ? 210 : 297;
+    const margin = 8;
+    const usableW = pageW - margin * 2;
+    const usableH = pageH - margin * 2;
+
+    const imgW = canvas.width;
+    const imgH = canvas.height;
+
+    const title = document.getElementById('planTitle').textContent || 'Terminplan';
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(40);
+    pdf.text(title, margin, margin - 1);
+
+    const topOffset = 5; // space for title
+    const drawH = usableH - topOffset;
+
+    if (pdfOpts.scale === 'fit') {
+      // Scale to fit on one page
+      const ratio = Math.min(usableW / imgW, drawH / imgH);
+      const dw = imgW * ratio;
+      const dh = imgH * ratio;
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', margin, margin + topOffset, dw, dh);
+    } else {
+      // Original size – may span multiple pages
+      const mmPerPx = 0.264583; // 1px = 0.264583mm at 96dpi
+      const scale2 = 0.5; // html2canvas scale=2, so divide by 2
+      const dw = imgW * mmPerPx * scale2;
+      const dh = imgH * mmPerPx * scale2;
+      let yPos = 0;
+      let page = 0;
+      while (yPos < dh) {
+        if (page > 0) pdf.addPage();
+        const sliceH = Math.min(drawH, dh - yPos);
+        // Clip the canvas for this page
+        const sliceCanvas = document.createElement('canvas');
+        const pxPerMm = imgW / dw;
+        sliceCanvas.width = imgW;
+        sliceCanvas.height = Math.ceil(sliceH * pxPerMm);
+        const ctx = sliceCanvas.getContext('2d');
+        ctx.drawImage(canvas, 0, yPos * pxPerMm, imgW, sliceCanvas.height, 0, 0, imgW, sliceCanvas.height);
+        pdf.addImage(sliceCanvas.toDataURL('image/png'), 'PNG', margin, margin + topOffset, dw, sliceH);
+        yPos += sliceH;
+        page++;
+      }
+    }
+
+    // Footer
+    const totalPages = pdf.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      pdf.setPage(i);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(7);
+      pdf.setTextColor(150);
+      const d = new Date();
+      pdf.text(`${title} – ${d.toLocaleDateString('de-DE')}`, margin, pageH - 4);
+      pdf.text(`${i} / ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
+    }
+
+    fill.style.width = '100%';
+    await new Promise(r => setTimeout(r, 200));
+
+    const d = new Date();
+    const fname = `terminplan_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.pdf`;
+    pdf.save(fname);
+
+    closePdfModal();
+    document.getElementById('statusText').textContent = 'PDF gespeichert ✓';
+    setTimeout(()=>document.getElementById('statusText').textContent='', 3000);
+
+  } catch(err) {
+    console.error(err);
+    statusTxt.textContent = 'Fehler: ' + err.message;
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('pdf-overlay').addEventListener('click', function(e){
+  if (e.target === this) closePdfModal();
+});
 
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
