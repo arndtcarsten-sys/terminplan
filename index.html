@@ -100,6 +100,16 @@
   .table-row:hover .del-btn { opacity: 1; }
   .del-btn:hover { background: #fde8e8; }
 
+  /* page break */
+  .pb-btn { width: 22px; height: 22px; background: none; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; color: var(--text-muted); font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0; transition: opacity .15s; margin-right: 2px; }
+  .table-row:hover .pb-btn { opacity: 1; }
+  .pb-btn:hover { background: #f0f4ff; color: var(--accent); }
+  .table-row.has-pagebreak { border-top: 2px dashed var(--accent) !important; }
+  .table-row.has-pagebreak .pb-btn { opacity: 1; color: var(--accent); background: #e8ecf8; border-color: var(--accent); }
+  .gantt-row.has-pagebreak { border-top: 2px dashed var(--accent) !important; }
+  /* page break indicator line in gantt */
+  .gantt-pb-line { position: absolute; left: 0; right: 0; top: -1px; height: 2px; background: var(--accent); opacity: 0.4; pointer-events: none; z-index: 4; }
+
   .toggle-btn { width: 16px; height: 16px; flex-shrink: 0; background: rgba(0,0,0,.1); border: none; border-radius: 2px; cursor: pointer; font-size: 9px; display: flex; align-items: center; justify-content: center; color: var(--text); transition: background .15s; padding: 0; }
   .toggle-btn:hover { background: rgba(0,0,0,.2); }
   .add-sub-btn { width: 16px; height: 16px; flex-shrink: 0; background: var(--accent); border: none; border-radius: 2px; cursor: pointer; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; color: white; opacity: 0; transition: opacity .15s, background .15s; padding: 0; }
@@ -252,15 +262,8 @@
     <div class="pdf-opt-row">
       <label>Format</label>
       <div class="btn-group">
-        <button class="pdf-opt-btn" id="pdf-landscape" onclick="setPdfOpt('orientation','landscape',this)">A4 Querformat</button>
-        <button class="pdf-opt-btn active" id="pdf-portrait" onclick="setPdfOpt('orientation','portrait',this)">A4 Hochformat</button>
-      </div>
-    </div>
-    <div class="pdf-opt-row">
-      <label>Skalierung</label>
-      <div class="btn-group">
-        <button class="pdf-opt-btn active" id="pdf-fit" onclick="setPdfOpt('scale','fit',this)">Auf Seite anpassen</button>
-        <button class="pdf-opt-btn" id="pdf-actual" onclick="setPdfOpt('scale','actual',this)">Originalgrösse</button>
+        <button class="pdf-opt-btn active" id="pdf-landscape" onclick="setPdfOpt('orientation','landscape',this)">A4 Querformat</button>
+        <button class="pdf-opt-btn" id="pdf-portrait" onclick="setPdfOpt('orientation','portrait',this)">A4 Hochformat</button>
       </div>
     </div>
     <div class="pdf-opt-row">
@@ -270,6 +273,7 @@
         <button class="pdf-opt-btn" id="pdf-gantt-only" onclick="setPdfOpt('content','gantt',this)">Nur Diagramm</button>
       </div>
     </div>
+    <p style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-top:4px">Seitenumbrüche über ⊞ in der Tabelle setzen.</p>
     <div id="pdf-progress"><span id="pdf-status-text">Wird erstellt...</span><div id="pdf-progress-bar"><div id="pdf-progress-fill"></div></div></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
       <button class="modal-btn cancel" onclick="closePdfModal()">Abbrechen</button>
@@ -302,6 +306,13 @@
       <option value="auslastung">Auslastung</option>
     </select>
   </div>
+  <div class="scale-wrap">
+    <label>Breite</label>
+    <input type="range" id="zoomSlider" min="2" max="60" value="16"
+      oninput="setZoom(+this.value)"
+      style="width:80px;cursor:pointer;accent-color:rgba(244,243,240,.6)">
+    <span id="zoomLabel" style="font-family:var(--font-mono);font-size:10px;opacity:.6;min-width:28px">16px</span>
+  </div>
   <div class="tb-sep"></div>
   <button class="tb-btn" onclick="undo()" id="undoBtn" title="Rückgängig (Ctrl+Z)" style="opacity:0.5" disabled>↩ Zurück</button>
   <button class="tb-btn" onclick="addRow()">+ Vorgang</button>
@@ -329,7 +340,7 @@
       <div class="lh-cell cell-farbe">Farbe</div>
       <div class="lh-cell cell-zust">Zuständig</div>
       <div class="lh-cell" style="width:36px;flex-shrink:0;text-align:center" title="In Auslastung berücksichtigen">Aul.</div>
-      <div class="lh-cell" style="width:28px;flex-shrink:0"></div>
+      <div class="lh-cell" style="width:54px;flex-shrink:0" title="Seitenumbruch / Löschen"></div>
     </div>
     <div id="left-body"></div>
   </div>
@@ -471,9 +482,19 @@ function getGroupTage(row) {
 
 // ── SCALE ──────────────────────────────────────────────────────────────────
 
+function setZoom(px){
+  cellPx = px;
+  document.getElementById('zoomLabel').textContent = px + 'px';
+  renderAll();
+}
+
 function setScale(s){
   scale = s;
-  cellPx = COL_W[s] || COL_W.month;
+  // Set sensible default zoom per scale
+  const defaults = { day:24, week:16, month:6, auslastung:6 };
+  cellPx = defaults[s] || 16;
+  document.getElementById('zoomSlider').value = cellPx;
+  document.getElementById('zoomLabel').textContent = cellPx + 'px';
   renderAll();
 }
 
@@ -562,6 +583,11 @@ function updateRow(id, field, value) {
   if (r) { r[field] = value; renderAll(); }
 }
 
+function togglePageBreak(id) {
+  const r = rows.find(r => r.id === id);
+  if (r) { r.pageBreak = !r.pageBreak; renderAll(); }
+}
+
 function toggleDone(id) {
   pushUndo();
   const r = rows.find(r => r.id === id);
@@ -635,6 +661,7 @@ function renderTableRows() {
     if (row.isGroup) cls += ' group-row';
     if (row.done)   cls += ' done';
     if (!isVisible(row)) cls += ' hidden-row';
+    if (row.pageBreak) cls += ' has-pagebreak';
     div.className = cls;
     div.dataset.id = row.id;
 
@@ -676,7 +703,10 @@ function renderTableRows() {
       <div class="cell" style="width:36px;flex-shrink:0;justify-content:center;border-right:1px solid var(--border)">
         <input type="checkbox" ${row.inAuslastung?'checked':''} title="In Auslastung" onchange="updateRow(${row.id},'inAuslastung',this.checked)" style="cursor:pointer;width:14px;height:14px">
       </div>
-      <div class="cell" style="width:28px;border-right:none"><button class="del-btn" onclick="deleteRow(${row.id})">×</button></div>
+      <div class="cell" style="width:54px;border-right:none;gap:2px">
+        <button class="pb-btn" onclick="togglePageBreak(${row.id})" title="Seitenumbruch vor dieser Zeile">⊞</button>
+        <button class="del-btn" onclick="deleteRow(${row.id})">×</button>
+      </div>
     `;
     body.appendChild(div);
   });
@@ -837,9 +867,15 @@ function renderGanttRows(){
     let cls='gantt-row';
     if(row.isGroup) cls+=' group-gantt-row';
     if(!visible) cls+=' hidden-row';
+    if(row.pageBreak) cls+=' has-pagebreak';
     rowDiv.className=cls;
     rowDiv.style.width=totalW+'px';
     rowDiv.appendChild(grid.cloneNode(true));
+
+    // Page break indicator line
+    if(row.pageBreak){
+      const pbl=document.createElement('div'); pbl.className='gantt-pb-line'; rowDiv.appendChild(pbl);
+    }
 
     if(startD){
       const x=daysBetween(ganttStart,startD)*cellPx;
@@ -1118,7 +1154,13 @@ function loadState(){
     const a = localStorage.getItem('gantt_ausData');
     if (r) rows = JSON.parse(r);
     if (n) nextId = +n;
-    if (s) { scale = s; document.getElementById('scaleSelect').value = s; cellPx = COL_W[s] || COL_W.week; }
+    if (s) {
+      scale = s;
+      document.getElementById('scaleSelect').value = s;
+      cellPx = COL_W[s] || COL_W.week;
+      document.getElementById('zoomSlider').value = cellPx;
+      document.getElementById('zoomLabel').textContent = cellPx + 'px';
+    }
     if (t) document.getElementById('planTitle').textContent = t;
     if (a) ausData = JSON.parse(a);
   } catch(e) {}
@@ -1217,7 +1259,7 @@ document.getElementById('feedback-overlay').addEventListener('click', function(e
 
 // ── PDF EXPORT ─────────────────────────────────────────────────────────────
 
-const pdfOpts = { orientation: 'portrait', scale: 'fit', content: 'both' };
+const pdfOpts = { orientation: 'landscape', scale: 'fit', content: 'both' };
 
 function exportPDF() {
   document.getElementById('pdf-overlay').classList.add('open');
@@ -1244,134 +1286,140 @@ async function doExportPDF() {
 
   btn.disabled = true;
   progress.style.display = 'block';
-  statusTxt.textContent = 'Wird gerendert...';
-  fill.style.width = '10%';
+  fill.style.width = '5%';
 
   try {
-    // Determine what to capture
-    const captureLeft  = pdfOpts.content !== 'gantt';
-    const leftPanel    = document.getElementById('left-panel');
-    const resizer      = document.getElementById('resizer');
-    const rightPanel   = document.getElementById('right-panel');
-    const ganttBody    = document.getElementById('gantt-body');
-
-    // Temporarily make right panel show full scroll width
-    const origOverflow = rightPanel.style.overflow;
-    rightPanel.style.overflow = 'visible';
-    ganttBody.style.overflow  = 'visible';
-
-    fill.style.width = '25%';
-    statusTxt.textContent = 'Diagramm erfassen...';
-    await new Promise(r => setTimeout(r, 50));
-
-    // Build a wrapper div with both panels side by side for capture
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'display:flex;background:#fff;position:fixed;top:-99999px;left:-99999px;z-index:-1';
-
-    if (captureLeft) {
-      const lClone = leftPanel.cloneNode(true);
-      lClone.style.cssText = leftPanel.style.cssText + ';overflow:visible;height:auto';
-      wrapper.appendChild(lClone);
-    }
-
-    const rClone = document.getElementById('gantt-container').cloneNode(true);
-    rClone.style.cssText = 'background:#fff;overflow:visible';
-    // Fix sticky header
-    rClone.querySelector('#gantt-header').style.position = 'relative';
-    wrapper.appendChild(rClone);
-    document.body.appendChild(wrapper);
-
-    fill.style.width = '45%';
-    await new Promise(r => setTimeout(r, 100));
-
-    const canvas = await html2canvas(wrapper, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: '#ffffff',
-      logging: false,
-      onclone: (doc) => {
-        // Ensure background colors print
-        doc.querySelectorAll('[style*="background"]').forEach(el => {
-          el.style.webkitPrintColorAdjust = 'exact';
-          el.style.printColorAdjust = 'exact';
-        });
-      }
-    });
-
-    document.body.removeChild(wrapper);
-    rightPanel.style.overflow = origOverflow;
-    ganttBody.style.overflow  = '';
-
-    fill.style.width = '75%';
-    statusTxt.textContent = 'PDF erstellen...';
-    await new Promise(r => setTimeout(r, 50));
-
     const { jsPDF } = window.jspdf;
     const orientation = pdfOpts.orientation;
     const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
-
     const pageW = orientation === 'landscape' ? 297 : 210;
     const pageH = orientation === 'landscape' ? 210 : 297;
     const margin = 8;
     const usableW = pageW - margin * 2;
-    const usableH = pageH - margin * 2;
-
-    const imgW = canvas.width;
-    const imgH = canvas.height;
-
+    const headerH = 5; // title row height in mm
+    const footerH = 5;
+    const drawH = pageH - margin * 2 - headerH - footerH;
     const title = document.getElementById('planTitle').textContent || 'Terminplan';
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(10);
-    pdf.setTextColor(40);
-    pdf.text(title, margin, margin - 1);
 
-    const topOffset = 5; // space for title
-    const drawH = usableH - topOffset;
+    // Determine row indices where page breaks occur
+    const visibleRows = rows.filter(r => isVisible(r));
+    // Indices (0-based) in visibleRows where a new page starts
+    const breakIndices = new Set([0]);
+    visibleRows.forEach((r, i) => { if (i > 0 && r.pageBreak) breakIndices.add(i); });
+    const breakList = Array.from(breakIndices).sort((a,b) => a-b);
+    breakList.push(visibleRows.length); // sentinel
 
-    if (pdfOpts.scale === 'fit') {
-      // Scale to fit on one page
-      const ratio = Math.min(usableW / imgW, drawH / imgH);
-      const dw = imgW * ratio;
-      const dh = imgH * ratio;
-      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', margin, margin + topOffset, dw, dh);
-    } else {
-      // Original size – may span multiple pages
-      const mmPerPx = 0.264583; // 1px = 0.264583mm at 96dpi
-      const scale2 = 0.5; // html2canvas scale=2, so divide by 2
-      const dw = imgW * mmPerPx * scale2;
-      const dh = imgH * mmPerPx * scale2;
-      let yPos = 0;
-      let page = 0;
-      while (yPos < dh) {
-        if (page > 0) pdf.addPage();
-        const sliceH = Math.min(drawH, dh - yPos);
-        // Clip the canvas for this page
-        const sliceCanvas = document.createElement('canvas');
-        const pxPerMm = imgW / dw;
-        sliceCanvas.width = imgW;
-        sliceCanvas.height = Math.ceil(sliceH * pxPerMm);
-        const ctx = sliceCanvas.getContext('2d');
-        ctx.drawImage(canvas, 0, yPos * pxPerMm, imgW, sliceCanvas.height, 0, 0, imgW, sliceCanvas.height);
-        pdf.addImage(sliceCanvas.toDataURL('image/png'), 'PNG', margin, margin + topOffset, dw, sliceH);
-        yPos += sliceH;
-        page++;
+    const rowH = 36; // --row-h in px
+    const ganttHeaderH = 57; // two gantt header rows
+
+    const captureLeft  = pdfOpts.content !== 'gantt';
+    const leftPanel    = document.getElementById('left-panel');
+    const rightPanel   = document.getElementById('right-panel');
+    const ganttCont    = document.getElementById('gantt-container');
+
+    // Capture the visible right panel width (what's on screen)
+    const visibleRightW = rightPanel.clientWidth;
+
+    let pageIdx = 0;
+
+    for (let b = 0; b < breakList.length - 1; b++) {
+      const startRow = breakList[b];
+      const endRow   = breakList[b + 1];
+
+      statusTxt.textContent = `Seite ${b+1} von ${breakList.length-1} rendern...`;
+      fill.style.width = (5 + 85 * b / (breakList.length - 1)) + '%';
+      await new Promise(r => setTimeout(r, 30));
+
+      // Build snapshot div
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'display:flex;background:#fff;position:fixed;top:-99999px;left:0;z-index:-1;';
+
+      if (captureLeft) {
+        const lClone = leftPanel.cloneNode(true);
+        // Use exact same width as on screen
+        lClone.style.cssText = `display:flex;flex-direction:column;overflow:visible;flex-shrink:0;background:#fff;width:${leftPanel.offsetWidth}px;`;
+        const lBody = lClone.querySelector('#left-body');
+        lBody.innerHTML = '';
+        lBody.style.overflow = 'visible';
+        const srcRows = document.querySelectorAll('#left-body .table-row');
+        let vi = 0;
+        srcRows.forEach(el => {
+          if (el.classList.contains('hidden-row')) return;
+          if (vi >= startRow && vi < endRow) lBody.appendChild(el.cloneNode(true));
+          vi++;
+        });
+        wrapper.appendChild(lClone);
       }
-    }
 
-    // Footer
-    const totalPages = pdf.getNumberOfPages();
-    for (let i = 1; i <= totalPages; i++) {
-      pdf.setPage(i);
+      // Gantt: clip to visible right panel width
+      const gWrap = document.createElement('div');
+      gWrap.style.cssText = `width:${visibleRightW}px;overflow:hidden;background:#fff;flex-shrink:0;`;
+      const gClone = ganttCont.cloneNode(true);
+      gClone.style.cssText = 'background:#fff;overflow:visible;position:relative;';
+      gClone.querySelector('#gantt-header').style.position = 'relative';
+      // Offset gantt to show the currently scrolled position
+      const scrollLeft = rightPanel.scrollLeft;
+      gClone.style.transform = `translateX(-${scrollLeft}px)`;
+
+      const gBody = gClone.querySelector('#gantt-body');
+      gBody.innerHTML = '';
+      const srcGRows = document.querySelectorAll('#gantt-body .gantt-row');
+      let gi = 0;
+      srcGRows.forEach(el => {
+        if (el.classList.contains('hidden-row')) return;
+        if (gi >= startRow && gi < endRow) gBody.appendChild(el.cloneNode(true));
+        gi++;
+      });
+      const depSvg = gClone.querySelector('#dep-arrows');
+      if (depSvg) depSvg.innerHTML = '<defs></defs>';
+      gWrap.appendChild(gClone);
+      wrapper.appendChild(gWrap);
+
+      document.body.appendChild(wrapper);
+      await new Promise(r => setTimeout(r, 80));
+
+      const canvas = await html2canvas(wrapper, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+      });
+
+      document.body.removeChild(wrapper);
+
+      // Add page to PDF
+      if (pageIdx > 0) pdf.addPage();
+
+      // Title
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.setTextColor(40);
+      pdf.text(title + (breakList.length > 2 ? `  (${b+1}/${breakList.length-1})` : ''), margin, margin + 3);
+
+      // Scale canvas to fit width, then check height
+      const imgAspect = canvas.height / canvas.width;
+      let dw = usableW;
+      let dh = dw * imgAspect;
+      if (dh > drawH) {
+        // Scale down to fit height
+        dh = drawH;
+        dw = dh / imgAspect;
+      }
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', margin, margin + headerH, dw, dh);
+
+      // Footer
       pdf.setFont('helvetica', 'normal');
       pdf.setFontSize(7);
       pdf.setTextColor(150);
       const d = new Date();
-      pdf.text(`${title} – ${d.toLocaleDateString('de-DE')}`, margin, pageH - 4);
-      pdf.text(`${i} / ${totalPages}`, pageW - margin, pageH - 4, { align: 'right' });
+      pdf.text(`${title} – ${d.toLocaleDateString('de-DE')}`, margin, pageH - margin + 2);
+      pdf.text(`${b+1} / ${breakList.length-1}`, pageW - margin, pageH - margin + 2, { align: 'right' });
+
+      pageIdx++;
     }
 
     fill.style.width = '100%';
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 150));
 
     const d = new Date();
     const fname = `terminplan_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}.pdf`;
@@ -1379,7 +1427,7 @@ async function doExportPDF() {
 
     closePdfModal();
     document.getElementById('statusText').textContent = 'PDF gespeichert ✓';
-    setTimeout(()=>document.getElementById('statusText').textContent='', 3000);
+    setTimeout(() => document.getElementById('statusText').textContent = '', 3000);
 
   } catch(err) {
     console.error(err);
