@@ -124,8 +124,8 @@
   #right-panel { flex: 1; overflow: auto; position: relative; background: var(--surface); }
   #right-panel::-webkit-scrollbar { height: 8px; width: 8px; }
   #right-panel::-webkit-scrollbar-thumb { background: var(--border-dark); border-radius: 3px; }
-  #gantt-container { position: relative; min-width: 100%; }
-  #gantt-header { position: sticky; top: 0; z-index: 5; background: var(--header-bg); border-bottom: 2px solid var(--border-dark); }
+  #gantt-container { position: relative; display: inline-block; min-width: 0; }
+  #gantt-header { position: sticky; top: 0; z-index: 5; background: var(--header-bg); border-bottom: 2px solid var(--border-dark); width: 100%; }
   #gantt-header-top { display: flex; height: var(--header-h); border-bottom: 1px solid rgba(244,243,240,.15); }
   #gantt-header-bot { display: flex; height: var(--header-h); }
   .gh-cell { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--header-text); letter-spacing: .05em; border-right: 1px solid rgba(244,243,240,.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; white-space: nowrap; padding: 0 4px; text-transform: uppercase; }
@@ -311,7 +311,10 @@
     <input type="range" id="zoomSlider" min="2" max="60" value="16"
       oninput="setZoom(+this.value)"
       style="width:80px;cursor:pointer;accent-color:rgba(244,243,240,.6)">
-    <span id="zoomLabel" style="font-family:var(--font-mono);font-size:10px;opacity:.6;min-width:28px">16px</span>
+    <input type="number" id="zoomInput" min="2" max="120" value="16"
+      onchange="setZoom(Math.max(2,Math.min(120,+this.value)))"
+      style="width:42px;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,.08);border:1px solid rgba(244,243,240,.3);color:var(--header-text);padding:3px 5px;border-radius:var(--radius);text-align:center">
+    <span style="font-family:var(--font-mono);font-size:10px;opacity:.5">px</span>
   </div>
   <div class="tb-sep"></div>
   <button class="tb-btn" onclick="undo()" id="undoBtn" title="Rückgängig (Ctrl+Z)" style="opacity:0.5" disabled>↩ Zurück</button>
@@ -483,18 +486,24 @@ function getGroupTage(row) {
 // ── SCALE ──────────────────────────────────────────────────────────────────
 
 function setZoom(px){
+  px = Math.max(2, Math.min(120, Math.round(px)));
   cellPx = px;
-  document.getElementById('zoomLabel').textContent = px + 'px';
+  const slider = document.getElementById('zoomSlider');
+  const input  = document.getElementById('zoomInput');
+  if (slider) slider.value = Math.min(60, px);
+  if (input)  input.value  = px;
   renderAll();
 }
 
 function setScale(s){
   scale = s;
-  // Set sensible default zoom per scale
   const defaults = { day:24, week:16, month:6, auslastung:6 };
-  cellPx = defaults[s] || 16;
-  document.getElementById('zoomSlider').value = cellPx;
-  document.getElementById('zoomLabel').textContent = cellPx + 'px';
+  const px = defaults[s] || 16;
+  cellPx = px;
+  const slider = document.getElementById('zoomSlider');
+  const input  = document.getElementById('zoomInput');
+  if (slider) slider.value = Math.min(60, px);
+  if (input)  input.value  = px;
   renderAll();
 }
 
@@ -1158,8 +1167,10 @@ function loadState(){
       scale = s;
       document.getElementById('scaleSelect').value = s;
       cellPx = COL_W[s] || COL_W.week;
-      document.getElementById('zoomSlider').value = cellPx;
-      document.getElementById('zoomLabel').textContent = cellPx + 'px';
+      const slider = document.getElementById('zoomSlider');
+      const input  = document.getElementById('zoomInput');
+      if (slider) slider.value = Math.min(60, cellPx);
+      if (input)  input.value  = cellPx;
     }
     if (t) document.getElementById('planTitle').textContent = t;
     if (a) ausData = JSON.parse(a);
